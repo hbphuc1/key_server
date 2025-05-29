@@ -1,17 +1,11 @@
+import requests
 from flask import Flask, request, jsonify
-import firebase_admin
-from firebase_admin import credentials, db
 
 app = Flask(__name__)
+
 API_TOKEN = "hbpgamer"
+FIREBASE_DB_URL = "https://keyserver-a7764-default-rtdb.asia-southeast1.firebasedatabase.app"
 
-# 🔐 Khởi tạo Firebase Admin SDK
-cred = credentials.Certificate("serviceAccountKey.json")
-firebase_admin.initialize_app(cred, {
-    "databaseURL": "https://keyserver-a7764-default-rtdb.asia-southeast1.firebasedatabase.app/"
-})
-
-# 📌 Hàm kiểm tra token
 def token_required(func):
     def wrapper(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
@@ -24,40 +18,43 @@ def token_required(func):
     wrapper.__name__ = func.__name__
     return wrapper
 
-# ✅ API kiểm tra key
 @app.route('/verify-key', methods=['POST'])
 @token_required
 def verify_key():
-    data = request.json
-    key = data.get('key')
-    ref = db.reference(f"keys/{key}")
-    value = ref.get()
+    key = request.json.get("key")
+    try:
+        res = requests.get(f"{FIREBASE_DB_URL}/{key}.json")
+        if res.status_code == 200:
+            value = res.json()
+            if value is None:
+                return jsonify({"status": "not_found"}), 404
+            elif value == "unused":
+                return jsonify({"status": "unused"}), 200
+            elif value == "used":
+                return jsonify({"status": "used"}), 200
+            else:
+                return jsonify({"status": "invalid"}), 400
+        else:
+            return jsonify({"error": "Firebase error"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    if value is None:
-        return jsonify({'status': 'not_found'}), 404
-    elif value == 'used':
-        return jsonify({'status': 'used'}), 200
-    elif value == 'unused':
-        return jsonify({'status': 'unused'}), 200
-    else:
-        return jsonify({'status': 'invalid'}), 400
-
-# ✅ API đánh dấu key đã dùng
 @app.route('/mark-used', methods=['POST'])
 @token_required
 def mark_used():
-    data = request.json
-    key = data.get('key')
-    ref = db.reference(f"keys/{key}")
-    if ref.get() is None:
-        return jsonify({'status': 'not_found'}), 404
+    key = request.json.get("key")
+    try:
+        res = requests.put(f"{FIREBASE_DB_URL}/{key}.json", json="used")
+        if res.status_code == 200:
+            return jsonify({"status": "updated"}), 200
+        else:
+            return jsonify({"error": "Firebase error"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    ref.set("used")
-    return jsonify({'status': 'updated'}), 200
-
-@app.route('/', methods=['GET'])
+@app.route('/')
 def home():
     return "Server is alive", 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run()
